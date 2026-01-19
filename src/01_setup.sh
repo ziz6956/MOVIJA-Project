@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 #
-# Quick start command / Команда быстрого запуска:
-# wget -O setup.sh https://gist.githubusercontent.com/ziz6956/272eb4fdf409ba45d90fa582583f37cc/raw/setup.sh && chmod +x setup.sh && ./setup.sh
-#
-# Automatic VPS Setup Script (Ubuntu 20.04/22.04/24.04)
+# # Automatic VPS Setup Script (Ubuntu 20.04/22.04/24.04)
 # Скрипт автоматической настройки VPS (Ubuntu 20.04/22.04/24.04)
 #
 # Actions: Update, SWAP 2GB, TCP BBR, UFW, Auto-Credentials, Auto-Reboot
