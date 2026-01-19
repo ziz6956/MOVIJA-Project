@@ -15,3 +15,13 @@ Run the following command on your VPS (Ubuntu 20.04+):
 
 ```bash
 wget -O 01_setup.sh [https://raw.githubusercontent.com/ziz6956/MOVIJA-Project/main/01_setup.sh](https://raw.githubusercontent.com/ziz6956/MOVIJA-Project/src/01_setup.sh) && chmod +x setup.sh && ./01_setup.sh
+
+## 🛠 Управление (CLI)
+Используйте команду \`tg-bot\` для управления режимом доступа и настройками:
+
+\`\`\`bash
+sudo tg-bot help
+sudo tg-bot test-mode enable   # Включить пароль
+sudo tg-bot test-mode disable  # Отключить пароль
+sudo tg-bot test-mode status   # Проверить статус
+\`\`\`
