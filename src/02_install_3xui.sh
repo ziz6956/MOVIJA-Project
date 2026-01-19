@@ -1,7 +1,5 @@
 #!/bin/bash
 
-# curl -Ls "https://gist.githubusercontent.com/ziz6956/6c51dfaca88e9903d945d1ecb2f5e18f/raw/install_3xui.sh?v=$(date +%s)" | sudo bash
-
 set -e
 
 echo "--- [1/4] Установка зависимостей..."

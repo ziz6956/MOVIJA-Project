@@ -11,27 +11,46 @@ from cryptography.hazmat.primitives import serialization
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 
 # === КОНФИГУРАЦИЯ ===
 TOKEN = os.getenv("BOT_TOKEN")
 XUI_URL = os.getenv("XUI_URL")
 XUI_USER = os.getenv("XUI_USER")
 XUI_PASS = os.getenv("XUI_PASS")
-VERSION = "1.1.0"
+VERSION = "1.2.0"
+CONFIG_PATH = "/app/data/config.json"
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 bot = Bot(token=TOKEN)
-dp = Dispatcher()
+# Добавляем MemoryStorage для работы FSM (машины состояний)
+dp = Dispatcher(storage=MemoryStorage())
+
+# === STATES & CONFIG UTILS ===
+class Form(StatesGroup):
+    waiting_for_password = State()
+
+def get_config():
+    """Читает конфиг. Если файла нет — возвращает дефолтные настройки (тест выключен)."""
+    try:
+        with open(CONFIG_PATH, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"test_mode": False, "password": "admin"}
+    except Exception as e:
+        logger.error(f"Config read error: {e}")
+        return {"test_mode": False}
 
 def generate_keys():
     """Генерация ключей VLESS Reality (URL-Safe Base64)"""
     private_key = x25519.X25519PrivateKey.generate()
     public_key = private_key.public_key()
     
-    # URL-safe base64 без паддинга
     priv_b64 = base64.urlsafe_b64encode(private_key.private_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PrivateFormat.Raw,
@@ -82,7 +101,6 @@ async def create_full_inbound(session, base_url, client_email):
         if not res.get("success"):
             return f"Error creating inbound: {res.get('msg')}"
 
-    # Получаем IP
     try:
         async with session.get("http://checkip.amazonaws.com", timeout=2) as ip_resp:
             host_ip = (await ip_resp.text()).strip()
@@ -104,7 +122,6 @@ async def get_3xui_link(tg_username: str) -> str:
     client_email = f"{tg_username}_tg"
 
     async with aiohttp.ClientSession() as session:
-        # 1. Логин
         login_payload = {"username": XUI_USER, "password": XUI_PASS}
         async with session.post(f"{base_url}/login", data=login_payload) as resp:
             if resp.status != 200:
@@ -112,7 +129,6 @@ async def get_3xui_link(tg_username: str) -> str:
             if not (await resp.json()).get('success'):
                 return "Error: Login success=false"
 
-        # 2. Поиск Inbound
         async with session.get(f"{base_url}/panel/api/inbounds/list") as resp:
             data = await resp.json()
             inbounds = data.get("obj", [])
@@ -122,7 +138,6 @@ async def get_3xui_link(tg_username: str) -> str:
         if not target:
             return await create_full_inbound(session, base_url, client_email)
 
-        # 3. Добавление клиента к существующему Inbound
         inbound_id = target["id"]
         stream_settings = json.loads(target["streamSettings"])
         
@@ -133,7 +148,6 @@ async def get_3xui_link(tg_username: str) -> str:
         except:
              return "Error: Reality keys not found/bad config"
 
-        # Проверка дубликатов
         settings = json.loads(target["settings"])
         existing_client = next((c for c in settings["clients"] if c["email"] == client_email), None)
         
@@ -154,7 +168,6 @@ async def get_3xui_link(tg_username: str) -> str:
                 if not (await resp.json()).get("success"):
                     return "Error adding client"
 
-        # Получаем IP
         try:
             async with session.get("http://checkip.amazonaws.com") as ip_resp:
                 host_ip = (await ip_resp.text()).strip()
@@ -177,16 +190,51 @@ async def cmd_start(message: types.Message):
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 @dp.callback_query(F.data == "get_vpn")
-async def process_get_vpn(callback: types.CallbackQuery):
-    await callback.message.edit_text("⏳ <b>Генерирую ключ...</b>", parse_mode="HTML")
+async def process_get_vpn(callback: types.CallbackQuery, state: FSMContext):
+    # --- ЛОГИКА МОДУЛЯ TEST-MODE ---
+    cfg = get_config()
+    if cfg.get("test_mode"):
+        await callback.message.answer("🔒 <b>Режим закрытого тестирования.</b>\nВведите пароль:", parse_mode="HTML")
+        await state.set_state(Form.waiting_for_password)
+        await callback.answer()
+        return
+    # -------------------------------
+
+    await _generate_and_send_key(callback.message, callback.from_user)
+    await callback.answer()
+
+@dp.message(Form.waiting_for_password)
+async def process_password(message: types.Message, state: FSMContext):
+    cfg = get_config()
+    # Удаляем сообщение с паролем для безопасности
+    try:
+        await message.delete()
+    except:
+        pass
+
+    if message.text.strip() == cfg.get("password"):
+        await message.answer("✅ Пароль верный.")
+        await state.clear()
+        await _generate_and_send_key(message, message.from_user)
+    else:
+        msg = await message.answer("❌ Неверный пароль. Попробуйте снова:")
+        await asyncio.sleep(3)
+        try:
+            await msg.delete()
+        except:
+            pass
+
+async def _generate_and_send_key(message_obj, user_obj):
+    """Вспомогательная функция, чтобы не дублировать код"""
+    status_msg = await message_obj.answer("⏳ <b>Генерирую ключ...</b>", parse_mode="HTML")
     
-    username = callback.from_user.username or f"id{callback.from_user.id}"
+    username = user_obj.username or f"id{user_obj.id}"
     link = await get_3xui_link(username)
     
     if "Error" in link:
-        await callback.message.edit_text(f"❌ <b>Ошибка:</b>\n{link}", parse_mode="HTML")
+        await status_msg.edit_text(f"❌ <b>Ошибка:</b>\n{link}", parse_mode="HTML")
     else:
-        await callback.message.edit_text(
+        await status_msg.edit_text(
             f"✅ <b>Ваш ключ готов!</b>\n\n<code>{link}</code>\n\n"
             f"Нажмите на ключ для копирования.",
             parse_mode="HTML"
